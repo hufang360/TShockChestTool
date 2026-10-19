@@ -1,4 +1,68 @@
-给你的箱子名前加上物品图标，自动用第一个物品作为图标。
+# ChestTool
 
-没有任何指令，下载[ChestTool.dll](https://github.com/hufang360/TShockChestTool/releases/download/v1.1/ChestTool-v1.1.dll) 拷贝到 ServerPlugins 下，然后重启服务器即可。
+给你的箱子名加上物品图标，自动用箱子里的第一个物品作为图标。
+v2.0.0 起新增 `/chest` 指令，可以查找、统计、整理箱子。
 
+## 安装
+
+下载 [ChestTool.dll](https://github.com/hufang360/TShockChestTool/releases/download/v2.0.0/ChestTool-v2.0.0.dll)，
+放进服务端的 `ServerPlugins/` 目录，重启服务器即可，不需要配置。
+
+需要 TShock 6.x（.NET 9），旧的 5.x 加载不了。
+
+## 指令
+
+简写：`find→f`、`findall→fa`、`findbase→fb`、`stats→s`、`organize→org`、`help→h`。
+
+### 查找
+
+| 指令 | 权限 | 说明 |
+|------|------|------|
+| `/chest <物品>`（`f`） | `hf.chest.use` | 视野内已命名的箱子，找到就传送 |
+| `/chest findall <物品>`（`fa`） | `hf.chest.use` | 全图查找，只报数量和箱子数 |
+| `/chest findbase <物品>`（`fb`） | `hf.chest.admin` | 出生点附近查找（含无名箱子），只报数量 |
+
+### 统计（管理员）
+
+```
+/chest stats [页] [--base] [--bychest] [--nopage]
+```
+
+- 默认统计视野内的箱子，按物品类别分组，分页显示。
+- `--base`：改成统计出生点附近的箱子。
+- `--bychest`（`-c`）：按箱子名分组，一个箱子一组。
+- `--nopage`（`-n`）：一次显示全部，不翻页。
+- 统计忽略词缀，同一物品只算一种。
+- 超过一格堆叠上限会拆成多个图标，如 1500 个土块 → `[i/s999:2] [i/s501:2]`。
+
+### 整理
+
+| 指令 | 权限 | 说明 |
+|------|------|------|
+| `/chest org`（`organize`） | `hf.chest.use` | 整理视野内名字带标记的箱子 |
+| `/chest org help`（`h`） | | 查看整理说明 |
+
+- 名字以「清除词缀」结尾：清词缀、合并堆叠、空格子归到后面。
+- 名字以「--」结尾：按第一个物品自动起名，没图标时顺手补上。
+- 整理前请先合上箱子，箱子名关箱后才会同步给服务器。
+
+### 展示
+
+- `/chest show @1`：把物品发到自己的聊天框，带词缀和数量。
+- `@1`～`@10` 是快捷栏，`@b1`～`@b40` 是背包。
+
+### 物品的写法
+
+- `757`：物品 id。
+- `铜短剑`：物品名，带空格要加引号（`"Magic Mirror"`）。
+- `[i:757]`：物品链接，Alt+左键单击物品即可得到。
+- `@1`：快捷栏第 1 格；`@b1`：背包第 1 格。
+- `-`：重复上一次查的物品。
+
+## 说明
+
+- 权限：`hf.chest.use` 给普通玩家；`hf.chest.admin` 额外能用 `findbase`、`stats`。
+- 控制台没有视野：只能用 `findall`、`findbase`、`stats --base`，且 `stats` 不分页。
+- 箱子名最长 20 个字符（含图标），超长只截断文字，图标不会坏。
+- 箱子名只有图标、没有文字时，用「--」标记让插件自动起名。
+- 统计与帮助都是每页 8 行，`/chest help 2` 可翻页。
