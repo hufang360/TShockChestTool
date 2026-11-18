@@ -67,7 +67,6 @@ namespace ChestTool
                     "/chest <物品>，视野内找，会传送。@1=快捷栏第1格",
                     "/chest findall <物品>，全图找，只报数量",
                     "/chest findbase <物品>，基地里找，只报数量。含没名字的箱子。（管理员）",
-                    "/chest show @1，展示快捷栏1~10格的物品到聊天框",
                     "/chest org [help]，整理视野内箱子",
                     "/chest stats，统计箱子（管理员），可加 --base --bychest --nopage",
                 ];
@@ -80,13 +79,16 @@ namespace ChestTool
                         || line.StartsWith("/chest stats", StringComparison.Ordinal));
                 }
 
-                // 控制台：没有视野，也没有可交互的对象
+                // 不在游戏里：整理必须进游戏操作；/chest <物品> 要求有在线的本人
                 if (!op.RealPlayer)
                 {
                     lines.RemoveAll(line =>
-                        line.StartsWith("/chest org", StringComparison.Ordinal)
-                        || line.StartsWith("/chest <", StringComparison.Ordinal)
-                        || line.StartsWith("/chest show", StringComparison.Ordinal));
+                        line.StartsWith("/chest org", StringComparison.Ordinal));
+
+                    if (ResolveSelf(op) == null)
+                    {
+                        lines.RemoveAll(line => line.StartsWith("/chest <", StringComparison.Ordinal));
+                    }
                 }
 
                 Pagination(args, lines, "/chest");
@@ -145,11 +147,6 @@ namespace ChestTool
                 case "s":
                 case "stats":
                     Stats(args);
-                    return;
-
-                // 展示快捷栏 / 背包物品到聊天框
-                case "show":
-                    ShowItem(args);
                     return;
 
                 // 其余情况视为直接查找物品：/chest <物品>
@@ -354,18 +351,20 @@ namespace ChestTool
                 }
             }
 
-            // 控制台没有视野，只能统计出生点附近，而且看日志不分页
+            // 不在游戏里：有在线的同名本人就用他的视野，否则只能统计出生点附近；看日志不分页
+            TSPlayer me = op;
             if (!op.RealPlayer)
             {
-                if (!baseArea)
+                me = ResolveSelf(op) ?? op;
+                if (!me.RealPlayer && !baseArea)
                 {
-                    op.SendErrorMessage("控制台没有视野，请用 /chest stats --base");
+                    op.SendErrorMessage("没有视野，请用 /chest stats --base；或让本人上线后再执行");
                     return;
                 }
                 noPage = true;
             }
 
-            Rectangle screen = GetViewRectangle(op, baseArea);
+            Rectangle screen = GetViewRectangle(me, baseArea);
             int chestCount = 0;
             int typeCount = 0;
 
@@ -601,12 +600,16 @@ namespace ChestTool
 
             string query = args.Parameters[0];
 
-            // 控制台没有视野，不能用默认的视野内查找
-            if (!op.RealPlayer && mode == FindMode.View)
+            // 视野内查找要知道「本人」在哪：游戏内是自己，REST / 控制台按账号名找在线的同名玩家
+            TSPlayer self = mode == FindMode.View ? ResolveSelf(op) : null;
+            if (mode == FindMode.View && self == null)
             {
-                op.SendErrorMessage("控制台没有视野，请用 /chest findall <物品> 或 /chest findbase <物品>");
+                op.SendErrorMessage($"{SelfMissingTip(op)}也可用 /chest findall <物品> 或 /chest findbase <物品>");
                 return;
             }
+
+            // 取视野、背包、上次查询都用「本人」，消息仍发回调用方
+            TSPlayer me = self ?? op;
 
             // 出生点附近查找仅管理员
             if (mode == FindMode.Base && !op.HasPermission(PermAdmin))
@@ -615,16 +618,16 @@ namespace ChestTool
                 return;
             }
 
-            Item item = ResolveItem(op, query);
+            Item item = ResolveItem(me, query);
             if (item == null) return;
 
             // 记住这次的物品，方便 /chest - 重复查询
             if (query != "-")
             {
-                LastQuery[op.Index] = query;
+                LastQuery[me.Index] = query;
             }
 
-            Rectangle screen = GetViewRectangle(op, mode == FindMode.Base);
+            Rectangle screen = GetViewRectangle(me, mode == FindMode.Base);
             List<Point16> positions = new List<Point16>();
             int total = 0;
 
@@ -670,10 +673,10 @@ namespace ChestTool
             op.SendInfoMessage($"共{positions.Count}个箱子 存放了{label}，共计{total}件");
 
             // 只有视野内查找才传送；出生点 / 全图只报数量
-            if (mode == FindMode.View && op.RealPlayer)
+            if (mode == FindMode.View && me.RealPlayer)
             {
                 Point16 first = positions[0];
-                op.Teleport(first.X * 16, (first.Y - 2) * 16);
+                me.Teleport(first.X * 16, (first.Y - 2) * 16);
             }
         }
 
@@ -778,30 +781,6 @@ namespace ChestTool
             return item;
         }
 
-        /// <summary>
-        /// /chest show @1：把快捷栏 1~10 格（@b1~@b40 背包）的物品发到自己的聊天框。
-        /// 消息正文就是物品 tag，带词缀与堆叠：如 [i:2]、[i/p57:4]、[i/s10:29]。
-        /// </summary>
-        private void ShowItem(CommandArgs args)
-        {
-            TSPlayer op = args.Player;
-            if (args.Parameters.Count == 0)
-            {
-                op.SendErrorMessage("语法：/chest show @1（@1~@10 快捷栏，@b1~@b40 背包）");
-                return;
-            }
-
-            Item item = ResolveInventoryItem(op, args.Parameters[0]);
-            if (item == null) return;
-
-            List<string> opts = new List<string>();
-            if (item.prefix > 0) opts.Add($"p{item.prefix}");
-            if (item.stack > 1) opts.Add($"s{item.stack}");
-            string optText = opts.Count > 0 ? "/" + string.Join(",", opts) : string.Empty;
-
-            op.SendInfoMessage($"[i{optText}:{item.type}]");
-        }
-
         /// <summary>视野矩形（122×68）：默认跟随玩家，baseArea 时以出生点为中心。</summary>
         private static Rectangle GetViewRectangle(TSPlayer op, bool baseArea)
         {
@@ -809,6 +788,60 @@ namespace ChestTool
             int tileY = baseArea ? Main.spawnTileY : op.TileY;
             return new Rectangle(tileX - 61, tileY - 34 + 3, 122, 68);
         }
+
+        #region 本人解析
+
+        /// <summary>
+        /// 「本人」：游戏内执行时就是 <paramref name="player"/> 自己；
+        /// REST / 控制台执行时（<see cref="TSRestPlayer"/>，RealPlayer=false，没有游戏内索引）
+        /// 按它的名字（= token 的账号名）去找同名且在线的真实玩家，找不到返回 null。
+        ///
+        /// <para>直接遍历 <c>TShock.Players</c> 比 <see cref="TSPlayer.FindByNameOrID"/> 安全：后者是前缀匹配
+        /// （且先 ToLower），账号 <c>hf</c> 会命中在线的 <c>hf2</c>，那读到的就是别人的存档。</para>
+        /// </summary>
+        private static TSPlayer ResolveSelf(TSPlayer player)
+        {
+            if (player == null) return null;
+            if (player.RealPlayer) return player;
+            return ResolveSelf(player.Name);
+        }
+
+        /// <summary>
+        /// 按名字（角色名 / 账号名，必须完全相同、不区分大小写）找在线的真实玩家，找不到返回 null。
+        /// 先按角色名匹配一轮，再按账号名匹配一轮：两个玩家各命中一边时，优先角色名匹配。
+        /// </summary>
+        private static TSPlayer ResolveSelf(string name)
+        {
+            name = (name ?? string.Empty).Trim();
+            if (name.Length == 0) return null;
+
+            TSPlayer byAccount = null;
+            foreach (TSPlayer p in TShock.Players)
+            {
+                if (p == null || !p.Active || !p.RealPlayer) continue;
+
+                if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)) return p;
+                if (byAccount == null
+                    && string.Equals(p.Account?.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    byAccount = p;
+                }
+            }
+            return byAccount;
+        }
+
+        /// <summary>
+        /// 「找不到本人」时的提示：有名字的（REST / 网页执行器）说明要先进游戏；控制台说明要在游戏内执行。
+        /// </summary>
+        private static string SelfMissingTip(TSPlayer caller)
+        {
+            bool hasName = caller != null
+                && !ReferenceEquals(caller, TSPlayer.Server)
+                && !string.IsNullOrWhiteSpace(caller.Name);
+            return hasName ? $"玩家 {caller.Name} 不在线，请先进入游戏！" : "此指令需要在游戏内执行！";
+        }
+
+        #endregion
 
         private static bool NameEndsWith(string name, string suffix)
         {
